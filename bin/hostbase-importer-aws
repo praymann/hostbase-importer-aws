@@ -1,0 +1,117 @@
+#!/usr/bin/env php
+<?php
+
+require __DIR__ . '/../vendor/autoload.php';
+
+use Httpful\Request;
+use Httpful\Response;
+use Shift31\HostbaseClient;
+use Aws\Ec2;
+
+# Pull in our Config
+$config = parse_ini_file(__DIR__ . '/../config.ini');
+
+$hostbaseUrl = $config['hostbaseUrl'];
+$accessKey = $config['accessKey'];
+$secretKey = $config['secretKey'];
+$filterRegex = isset($config['filterRegex']) ? $config['filterRegex'] : null;
+
+# Init the Hostbase Client
+$HbClient = new HostbaseClient($config['hostbaseUrl']);
+
+# Init the SDK
+$awsSdk = new Aws\Sdk([
+    'version' => 'latest',
+    'credentials' => [
+        'key' => $config['accessKey'],
+        'secret' => $config['secretKey'],
+    ]
+]);
+
+## Below is due to https://github.com/aws/aws-sdk-php/issues/243
+##
+## Negates having to have hardcoded regions :)
+##
+putenv("AWS_ACCESS_KEY_ID={$config['accessKey']}");
+putenv("AWS_SECRET_ACCESS_KEY={$config['secretKey']}");
+
+$command = 'aws ec2 describe-regions --output json';
+$allRegions = json_decode(shell_exec("{$command}"));
+##
+
+# Go through each region, get instances
+foreach($allRegions->Regions as $region) {
+
+    $ec2 = $awsSdk->createEc2(['region' => $region->RegionName]);
+    $result = $ec2->describeInstances()['Reservations'];
+
+    if(!empty($result)) {
+        foreach($result as $reservation) {
+            foreach($reservation['Instances'] as $instance) {
+                foreach($instance['Tags'] as $tag) {
+                    if( $tag['Key'] == 'Name' ) {
+
+                        $data = array();
+                        $fqdn = $tag['Value'] . ".hostbase.cmstechops.com";
+                        $data['fqdn'] = $fqdn;
+
+                    } else {
+                        echo "Instance: " . $instance['InstanceId'] . " has no 'Name' tag defined, skipping..." . PHP_EOL;
+                        continue;
+                    }
+                }
+                foreach($instance as $key => $value) {
+                    if (preg_match($filterRegex, $key)) {
+                        continue;
+                    }
+
+                    if (preg_match('/count|size|mtu/', $key)) {
+                        $value = (int)$value;
+                    }
+
+                    if ( $value == 'false') {
+                        $value = false;
+                    }
+
+                    if ($value == 'true') {
+                        $value = true;
+                    }
+
+                    $data[$key] = $value;
+
+                    /* make sure 'dataCenter' field is populated
+                    if ($awsinfo->name == $dataCenterFact) {
+                        $data['dataCenter'] = $value;
+                    }
+
+                    // make sure 'environment' field is populated
+                    if ($awsinfo->name == $environmentFact) {
+                        $data['environment'] = $value;
+                    }
+                    */
+                }
+
+                echo "Importing $fqdn..." . PHP_EOL;
+
+                try {
+                    // add
+                    echo "adding..." . PHP_EOL;
+                    $HbClient->store($data);
+                } catch (Exception $e) {
+                    echo $e->getMessage() . PHP_EOL;
+                    try {
+                        // update
+                        echo "updating..." . PHP_EOL;
+                        $HbClient->update($fqdn, $data);
+                    } catch (Exception $e) {
+                        echo $e->getMessage() . PHP_EOL;
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+

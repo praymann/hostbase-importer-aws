@@ -1,0 +1,17 @@
+{
+    "name": "praymann/hostbase-importer-aws",
+    "description": "Import into or update Hostbase with information from AWS",
+    "require": {
+        "shift31/hostbase-api-client": "0.2.*",
+        "php": ">=5.3",
+        "nategood/httpful": "0.2.*",
+        "aws/aws-sdk-php": "^3.2"
+    },
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Dan Pramann",
+            "email": "daniel@pramann.org"
+        }
+    ]
+}
