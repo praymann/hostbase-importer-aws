@@ -14,7 +14,8 @@ $config = parse_ini_file(__DIR__ . '/../config.ini');
 $hostbaseUrl = $config['hostbaseUrl'];
 $accessKey = $config['accessKey'];
 $secretKey = $config['secretKey'];
-$filterRegex = isset($config['filterRegex']) ? $config['filterRegex'] : null;
+$baseDomain = trim($config['baseDomain'], '.');
+$filterRegex = isset($config['filterRegex']) ? rtrim($config['filterRegex'], '/') . '|' . 'Tags/' : null;
 
 # Init the Hostbase Client
 $HbClient = new HostbaseClient($config['hostbaseUrl']);
@@ -48,33 +49,48 @@ foreach($allRegions->Regions as $region) {
     if(!empty($result)) {
         foreach($result as $reservation) {
             foreach($reservation['Instances'] as $instance) {
-                foreach($instance['Tags'] as $tag) {
-                    if( $tag['Key'] == 'Name' ) {
 
-                        $data = array();
-                        $fqdn = $tag['Value'] . ".hostbase.cmstechops.com";
+                $data = array();
+
+                while ($thisTag = current($instance['Tags'])) {
+                    if ($thisTag['Key'] == 'Name') {
+                        $fqdn = strtolower($thisTag['Value'] . ".hostbase" . "." . $baseDomain);
                         $data['fqdn'] = $fqdn;
-
                     } else {
-                        echo "Instance: " . $instance['InstanceId'] . " has no 'Name' tag defined, skipping..." . PHP_EOL;
-                        continue;
+                        $data[strtolower($thisTag['Key'])] = strtolower($thisTag['Value']);
                     }
+                    next($instance['Tags']);
                 }
+
+                # If the $fqdn varible didn't get set before this point, ignore this instance
+                if (!isset($fqdn)) {
+                    echo "Instance: " . $instance['InstanceId'] . " has no 'Name' tag defined, skipping..." . PHP_EOL;
+                    continue;
+                }
+
                 foreach($instance as $key => $value) {
+
+                    # Ignore the keys that match our regex filter from config.ini
                     if (preg_match($filterRegex, $key)) {
                         continue;
                     }
 
-                    if (preg_match('/count|size|mtu/', $key)) {
-                        $value = (int)$value;
-                    }
-
-                    if ( $value == 'false') {
+                    if ($value == 'false') {
                         $value = false;
                     }
 
                     if ($value == 'true') {
                         $value = true;
+                    }
+
+                    # No need to have Array for State, make it flat
+                    if ($key == 'State') {
+                        $data[$key] = $value['Name'];
+                        continue;
+                    }
+                    if ($key == 'Monitoring') {
+                        $data[$key] = $value['State'];
+                        continue;
                     }
 
                     $data[$key] = $value;
