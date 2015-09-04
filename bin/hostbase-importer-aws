@@ -3,130 +3,21 @@
 
 require __DIR__ . '/../vendor/autoload.php';
 
-use Httpful\Request;
-use Httpful\Response;
-use Shift31\HostbaseClient;
-use Aws\Ec2;
+use Hostbase\AWSImporter;
 
 # Pull in our Config
 $config = parse_ini_file(__DIR__ . '/../config.ini');
 
-$hostbaseUrl = $config['hostbaseUrl'];
-$accessKey = $config['accessKey'];
-$secretKey = $config['secretKey'];
-$baseDomain = trim($config['baseDomain'], '.');
-$filterRegex = isset($config['filterRegex']) ? rtrim($config['filterRegex'], '/') . '|' . 'Tags/' : null;
+# Init the importer
+$importer = new AWSImporter($config);
 
-# Init the Hostbase Client
-$HbClient = new HostbaseClient($config['hostbaseUrl']);
+$importer->importEc2();
 
-# Init the SDK
-$awsSdk = new Aws\Sdk([
-    'version' => 'latest',
-    'credentials' => [
-        'key' => $config['accessKey'],
-        'secret' => $config['secretKey'],
-    ]
-]);
+$importer->importRds();
 
-## Below is due to https://github.com/aws/aws-sdk-php/issues/243
-##
-## Negates having to have hardcoded regions :)
-##
-putenv("AWS_ACCESS_KEY_ID={$config['accessKey']}");
-putenv("AWS_SECRET_ACCESS_KEY={$config['secretKey']}");
+$importer->importElastiCache();
 
-$command = 'aws ec2 describe-regions --output json';
-$allRegions = json_decode(shell_exec("{$command}"));
-##
-
-# Go through each region, get instances
-foreach($allRegions->Regions as $region) {
-
-    $ec2 = $awsSdk->createEc2(['region' => $region->RegionName]);
-    $result = $ec2->describeInstances()['Reservations'];
-
-    if(!empty($result)) {
-        foreach($result as $reservation) {
-            foreach($reservation['Instances'] as $instance) {
-
-                $data = array();
-
-                while ($thisTag = current($instance['Tags'])) {
-                    if ($thisTag['Key'] == 'Name') {
-                        $fqdn = strtolower($thisTag['Value'] . ".hostbase" . "." . $baseDomain);
-                        $data['fqdn'] = $fqdn;
-                    } else {
-                        $data[strtolower($thisTag['Key'])] = strtolower($thisTag['Value']);
-                    }
-                    next($instance['Tags']);
-                }
-
-                # If the $fqdn varible didn't get set before this point, ignore this instance
-                if (!isset($fqdn)) {
-                    echo "Instance: " . $instance['InstanceId'] . " has no 'Name' tag defined, skipping..." . PHP_EOL;
-                    continue;
-                }
-
-                foreach($instance as $key => $value) {
-
-                    # Ignore the keys that match our regex filter from config.ini
-                    if (preg_match($filterRegex, $key)) {
-                        continue;
-                    }
-
-                    if ($value == 'false') {
-                        $value = false;
-                    }
-
-                    if ($value == 'true') {
-                        $value = true;
-                    }
-
-                    # No need to have Array for State, make it flat
-                    if ($key == 'State') {
-                        $data[$key] = $value['Name'];
-                        continue;
-                    }
-                    if ($key == 'Monitoring') {
-                        $data[$key] = $value['State'];
-                        continue;
-                    }
-
-                    $data[$key] = $value;
-
-                    /* make sure 'dataCenter' field is populated
-                    if ($awsinfo->name == $dataCenterFact) {
-                        $data['dataCenter'] = $value;
-                    }
-
-                    // make sure 'environment' field is populated
-                    if ($awsinfo->name == $environmentFact) {
-                        $data['environment'] = $value;
-                    }
-                    */
-                }
-
-                echo "Importing $fqdn..." . PHP_EOL;
-
-                try {
-                    // add
-                    echo "adding..." . PHP_EOL;
-                    $HbClient->store($data);
-                } catch (Exception $e) {
-                    echo $e->getMessage() . PHP_EOL;
-                    try {
-                        // update
-                        echo "updating..." . PHP_EOL;
-                        $HbClient->update($fqdn, $data);
-                    } catch (Exception $e) {
-                        echo $e->getMessage() . PHP_EOL;
-                    }
-                }
-            }
-        }
-    }
-}
+$importer->importElb();
 
 
 

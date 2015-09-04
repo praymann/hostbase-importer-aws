@@ -7,6 +7,11 @@
         "nategood/httpful": "0.2.*",
         "aws/aws-sdk-php": "^3.2"
     },
+    "autoload": {
+        "psr-0": {
+            "Hostbase": "lib"
+        }
+    },
     "license": "MIT",
     "authors": [
         {
